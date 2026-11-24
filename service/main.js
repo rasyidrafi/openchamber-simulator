@@ -1,4 +1,6 @@
 import http from 'node:http';
+import {liveBridge} from './live-bundle.js';
+const live=liveBridge();
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -9,7 +11,7 @@ const bindingFile=path.join(process.env.OPENCHAMBER_SERVICE_DATA_DIR || '.', 'hu
 let approvedUrl = await readFile(bindingFile,'utf8').then(JSON.parse).then(x=>x.url).catch(()=>null);
 let config = { url: 'http://127.0.0.1:8787/v1', client: '', admin: '' };
 async function readSettings() { const response=await fetch(`${process.env.OPENCHAMBER_HOST_CALLBACK_URL}/service/call`,{method:'POST',headers:{authorization:`Bearer ${serviceToken}`,'content-type':'application/json'},body:JSON.stringify({method:'settings.read',input:{}})}); if(!response.ok) throw Error('Cannot read OpenChamber integration settings'); return (await response.json()).result.settings; }
-async function syncSettings() { const s=await readSettings(); const url=new URL(s['hub-url'] || 'http://127.0.0.1:8787/v1'); if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash) throw Error('Invalid Hub API URL in Settings → Integrations'); const next={url:url.href.replace(/\/$/,''),client:s['client-token']||'',admin:s['admin-token']||''}; if(JSON.stringify(next)!==JSON.stringify(config)){await release();frameGeneration++;config=next;frame=null;changedAt=frameSeq+1;} }
+async function syncSettings() { const s=await readSettings(); const url=new URL(s['hub-url'] || 'http://127.0.0.1:8787/v1'); if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash) throw Error('Invalid Hub API URL in Settings → Integrations'); const next={url:url.href.replace(/\/$/,''),client:s['client-token']||'',admin:s['admin-token']||''}; if(JSON.stringify(next)!==JSON.stringify(config)){live.close();await release();frameGeneration++;config=next;frame=null;changedAt=frameSeq+1;} }
 let viewerBusy=false, lease = null, controller = null, pointer = null, frameSeq = 0, frame = null, lastCapture = 0, capturePromise = null, frameGeneration = 0, changedAt = 1;
 const json = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','cache-control':'no-store'}); res.end(JSON.stringify(value)); };
 const body = async req => { let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 16384) throw Error('Request too large'); } return JSON.parse(data || '{}'); };
@@ -34,6 +36,12 @@ async function handle(req,res) {
  if (path==='/health') return json(res,200,{ok:true});
  if (path==='/viewer/frame' && req.method==='GET') { const f=await capture(); if(f.bytes.length>5900000) throw Error('Screenshot exceeds panel transport limit'); return json(res,200,{seq:f.seq,png:f.bytes.toString('base64')}); }
  if (!path.startsWith('/surface/')) await syncSettings();
+ if(path==='/viewer/live' && req.method==='GET'){
+   if(!config.client||config.url!==approvedUrl)throw Error('Approved client connection required');
+   const generation=frameGeneration,packet=await live.read(config.url,config.client,Number(u.searchParams.get('after'))||0,u.searchParams.get('epoch'));
+   if(frameGeneration!==generation)throw Error('Connection changed');return json(res,200,packet);
+ }
+ if(path==='/viewer/touch' && req.method==='POST'){const e=await body(req);if(!config.client||config.url!==approvedUrl)throw Error('Approved client connection required');await live.touch(e);return json(res,200,{ok:true})}
  if(path==='/viewer/input' && req.method==='POST') {
    const x=await body(req), f=frame;
    if(!f||!Number.isInteger(x.seq)||x.seq<changedAt||x.seq>f.seq)return json(res,409,{error:'Device changed; wait for a new frame'});

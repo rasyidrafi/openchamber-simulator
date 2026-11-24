@@ -1,7 +1,8 @@
 {
   "name": "openchamber-simulator-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "scripts": {"build":"bun build service/live.js --target=node --format=esm --outfile=service/live-bundle.js && openchamber-guest-bundle panel/main.ts panel/main.js"},
   "type": "module",
   "openchamber": {
     "apiVersion": 1,
@@ -51,6 +52,7 @@
     "clsx": "^2.1.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "tailwind-merge": "^3.7.1"
+    "tailwind-merge": "^3.7.1",
+    "ws": "8.23.0"
   }
 }
