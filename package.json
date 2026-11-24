@@ -1,0 +1,56 @@
+{
+  "name": "openchamber-simulator-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "openchamber": {
+    "apiVersion": 1,
+    "contributes": {
+      "panel": {
+        "id": "simulator-hub",
+        "name": "Simulator",
+        "icon": "smartphone",
+        "entry": "panel/index.html"
+      },
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      },
+      "integration": {
+        "name": "Simulator Hub",
+        "description": "Configure the Hub API URL and secret tokens below. The generic connection field is not used; save the settings fields instead.",
+        "token": {
+          "apiOrigin": "https://localhost"
+        },
+        "settings": [
+          {
+            "id": "hub-url",
+            "label": "Hub API URL (including /v1)"
+          },
+          {
+            "id": "client-token",
+            "label": "Client token",
+            "secret": true
+          },
+          {
+            "id": "admin-token",
+            "label": "Admin token (optional)",
+            "secret": true
+          }
+        ]
+      }
+    },
+    "engines": {
+      "openchamber": ">=2.8.0"
+    }
+  },
+  "devDependencies": {
+    "@openchamber/sdk": "2.8.0",
+    "@remixicon/react": "4.7.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "tailwind-merge": "^3.7.1"
+  }
+}
