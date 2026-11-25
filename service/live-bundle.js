@@ -2984,7 +2984,7 @@ var import_websocket_server = __toESM(require_websocket_server(), 1);
 var wrapper_default = import_websocket.default;
 
 // service/live.js
-function liveBridge() {
+function liveBridge(device = "") {
   let socket, epoch = "", width = 0, height = 0, frames = [], bytes = 0, seq = 0, last = 0, next = 0;
   const pending = new Map;
   let waiters = new Set;
@@ -3009,6 +3009,8 @@ function liveBridge() {
     if (socket)
       return;
     const u = new URL(url + "/live");
+    if (device)
+      u.searchParams.set("device", device);
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
     const ws = new wrapper_default(u, { headers: { authorization: `Bearer ${token}` }, followRedirects: false, handshakeTimeout: 5000, maxPayload: 1600000, perMessageDeflate: false });
     socket = ws;
@@ -3057,7 +3059,7 @@ function liveBridge() {
       }
     });
   }
-  setInterval(() => {
+  const idle = setInterval(() => {
     if (socket && Date.now() - last > 4000)
       close();
   }, 1000).unref();
@@ -3099,7 +3101,10 @@ function liveBridge() {
       socket.send(JSON.stringify({ ...e, id }));
     });
   }
-  return { read, touch, close };
+  return { read, touch, close, dispose() {
+    clearInterval(idle);
+    close();
+  } };
 }
 export {
   liveBridge

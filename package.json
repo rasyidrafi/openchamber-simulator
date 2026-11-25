@@ -1,6 +1,6 @@
 {
   "name": "openchamber-simulator-hub",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "scripts": {"build":"bun build service/live.js --target=node --format=esm --outfile=service/live-bundle.js && openchamber-guest-bundle panel/main.ts panel/main.js"},
   "type": "module",

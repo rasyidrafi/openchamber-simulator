@@ -8,7 +8,7 @@ export function liveViewer(canvas:HTMLCanvasElement,request:Request,shown:()=>bo
     if(!sending)void drain()}
   async function drain(){sending=true;try{while(queue.length){const e=queue.shift()!;try{await request('/viewer/touch',e)}catch(err){notify(err instanceof Error?err.message:'Input failed');for(let i=queue.length-1;i>=0;i--)if(queue[i].gesture===e.gesture)queue.splice(i,1);if(contact?.event.gesture===e.gesture)contact=undefined}}}finally{sending=false}}
   function cancel(){if(contact){enqueue({...contact.event,type:'cancel'});contact=undefined}}
-  setInterval(()=>{if(contact&&shown()&&!sending&&!queue.length)enqueue({...contact.event,type:'hold'})},1500);
+  const heartbeat=setInterval(()=>{if(contact&&shown()&&!sending&&!queue.length)enqueue({...contact.event,type:'hold'})},1500);
   function reset(){cancel();if(decoder&&decoder.state!=='closed')decoder.close();decoder=undefined;epoch=drawn='';seq=0;canvas.hidden=true;failed=false;lastOutput=0}
   function xy(e:PointerEvent){const r=canvas.getBoundingClientRect();return {x:Math.min(canvas.width-1,Math.max(0,Math.floor((e.clientX-r.left)*canvas.width/r.width))),y:Math.min(canvas.height-1,Math.max(0,Math.floor((e.clientY-r.top)*canvas.height/r.height)))}}
   canvas.onpointerdown=e=>{if(contact||!drawn||e.button!==0)return;canvas.focus();canvas.setPointerCapture(e.pointerId);const event={type:'down',gesture:crypto.randomUUID(),epoch:drawn,...xy(e)};contact={id:e.pointerId,event};enqueue(event)};
@@ -26,5 +26,5 @@ export function liveViewer(canvas:HTMLCanvasElement,request:Request,shown:()=>bo
       if(decoder.decodeQueueSize>60)throw Error('Live decoder overloaded');decoder.decode(new EncodedVideoChunk({type:f.key?'key':'delta',timestamp:f.time,data:bytes}));seq=f.seq;
     }return !!lastOutput;
   }
-  return {poll,reset,key,cancel,get epoch(){return epoch}};
+  return {poll,reset,key,cancel,dispose(){clearInterval(heartbeat);window.removeEventListener('blur',cancel);reset()},get epoch(){return epoch}};
 }

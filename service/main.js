@@ -1,6 +1,8 @@
 import http from 'node:http';
 import {liveBridge} from './live-bundle.js';
 const live=liveBridge();
+const targets=new Map();let inventory=new Set(),inventoryConfig;
+function clearTargets(){for(const t of targets.values())t.live.dispose();targets.clear()}
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -15,10 +17,10 @@ async function syncSettings() { const s=await readSettings(); const url=new URL(
 let viewerBusy=false, lease = null, controller = null, pointer = null, frameSeq = 0, frame = null, lastCapture = 0, capturePromise = null, frameGeneration = 0, changedAt = 1;
 const json = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','cache-control':'no-store'}); res.end(JSON.stringify(value)); };
 const body = async req => { let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 16384) throw Error('Request too large'); } return JSON.parse(data || '{}'); };
-async function hub(path, {role='client', method='GET', data, leased=false} = {}) {
+async function hub(path, {role='client', method='GET', data, leased=false,leaseId} = {}) {
  if (config.url!==approvedUrl) throw Error('Approve the Hub URL in the simulator panel before connecting');
  const token = config[role]; if (!token) throw Error(`Set a ${role} token first`);
- const response = await fetch(config.url + '/' + path, {method, redirect:'error', signal:AbortSignal.timeout(12000), headers:{authorization:`Bearer ${token}`, ...(data ? {'content-type':'application/json'} : {}), ...(leased && lease ? {'x-lease-id':lease} : {})}, ...(data ? {body:JSON.stringify(data)} : {})});
+ const response = await fetch(config.url + '/' + path, {method, redirect:'error', signal:AbortSignal.timeout(12000), headers:{authorization:`Bearer ${token}`, ...(data ? {'content-type':'application/json'} : {}), ...(leaseId||leased&&lease ? {'x-lease-id':leaseId||lease} : {})}, ...(data ? {body:JSON.stringify(data)} : {})});
  if (!response.ok) { if (leased && [401,403].includes(response.status)) lease = null; throw Error(`Simulator Hub ${response.status} (${path})`); }
  return response;
 }
@@ -34,6 +36,19 @@ async function handle(req,res) {
  if (req.headers.authorization !== `Bearer ${serviceToken}`) return json(res,401,{error:'Unauthorized'});
  const u = new URL(req.url,'http://localhost'), path=u.pathname;
  if (path==='/health') return json(res,200,{ok:true});
+ const id=u.searchParams.get('device');
+ if(id){
+   await syncSettings();if(inventoryConfig!==config){clearTargets();inventory.clear();inventoryConfig=config}
+   if(!inventory.has(id))return json(res,409,{error:'Device unavailable; refresh the device list'});
+   const suffix='?device='+encodeURIComponent(id);let t=targets.get(id);if(!t){t={live:liveBridge(id),seq:0,min:1,width:0,height:0};targets.set(id,t)}
+   if(!config.client||config.url!==approvedUrl)throw Error('Approved client connection required');
+   if(path==='/viewer/live')return json(res,200,await t.live.read(config.url,config.client,Number(u.searchParams.get('after'))||0,u.searchParams.get('epoch')));
+   if(path==='/viewer/touch'){await t.live.touch(await body(req));return json(res,200,{ok:true})}
+   if(path==='/viewer/frame'){const r=await hub('device/screenshot'+suffix),b=Buffer.from(await r.arrayBuffer());if(b.length<24||b.length>5900000||b.readUInt32BE(0)!==0x89504e47)throw Error('Invalid screenshot');const w=b.readUInt32BE(16),h=b.readUInt32BE(20);if(w!==t.width||h!==t.height)t.min=t.seq+1;t.width=w;t.height=h;return json(res,200,{seq:++t.seq,png:b.toString('base64')})}
+   if(path==='/viewer/input'){const e=await body(req),point=(x,y)=>Number.isInteger(x)&&Number.isInteger(y)&&x>=0&&y>=0&&x<t.width&&y<t.height;if(!Number.isInteger(e.seq)||e.seq<t.min||e.seq>t.seq)throw Error('Stale device frame');if(!(e.type==='key'&&['HOME','BACK','ENTER'].includes(e.key)||e.type==='tap'&&point(e.x,e.y)||e.type==='swipe'&&point(e.x1,e.y1)&&point(e.x2,e.y2)&&Number.isInteger(e.duration)&&e.duration>=100&&e.duration<=5000))throw Error('Invalid device input');const binding=config,lease=(await (await hub('lease'+suffix,{method:'POST'})).json()).id;try{if(binding!==config)throw Error('Connection changed');await hub('device/input'+suffix,{method:'POST',data:e,leaseId:lease})}finally{if(binding===config)await hub('lease'+suffix,{method:'DELETE',leaseId:lease})}return json(res,200,{ok:true})}
+   if(path==='/action'&&req.method==='POST'){const e=await body(req);if(['start','stop','force-release'].includes(e.action)){await hub((e.action==='force-release'?'lease':'device/'+e.action)+suffix,{role:'admin',method:e.action==='force-release'?'DELETE':'POST'});return json(res,200,{ok:true})}throw Error('Not a device action')}
+   return json(res,404,{error:'Unknown device operation'});
+ }
  if (path==='/viewer/frame' && req.method==='GET') { const f=await capture(); if(f.bytes.length>5900000) throw Error('Screenshot exceeds panel transport limit'); return json(res,200,{seq:f.seq,png:f.bytes.toString('base64')}); }
  if (!path.startsWith('/surface/')) await syncSettings();
  if(path==='/viewer/live' && req.method==='GET'){
@@ -54,7 +69,7 @@ async function handle(req,res) {
    if(viewerBusy)return json(res,409,{error:'Device input is busy'});viewerBusy=true;
    try{await input(data)}finally{try{await release()}finally{viewerBusy=false}}return json(res,200,{ok:true});
  }
- if (path==='/state') { let devices=[], clientError=null, admin=false; if(config.client) try { devices=(await (await hub('devices')).json()).devices; } catch(e) {clientError=e.message;} if(config.admin) try { admin=(await (await hub('me',{role:'admin'})).json()).role==='admin'; } catch {} return json(res,200,{url:config.url,hasClient:!!config.client,hasAdmin:!!config.admin,admin,devices,clientError,leased:!!lease,urlApproved:config.url===approvedUrl}); }
+ if (path==='/state') { const binding=config;let devices=[], clientError=null, admin=false; if(config.client) try { devices=(await (await hub('devices')).json()).devices; } catch(e) {clientError=e.message;} if(config.admin) try { admin=(await (await hub('me',{role:'admin'})).json()).role==='admin'; } catch {} if(binding!==config)throw Error('Connection changed');if(inventoryConfig!==config)clearTargets();inventoryConfig=config;inventory=new Set(devices.map(d=>d.id));for(const [id,t] of targets)if(!inventory.has(id)){t.live.dispose();targets.delete(id)}return json(res,200,{url:config.url,hasClient:!!config.client,hasAdmin:!!config.admin,admin,devices,clientError,leased:!!lease,urlApproved:config.url===approvedUrl}); }
  if (path==='/action' && req.method==='POST') { const x=await body(req); if (x.action==='approve-url') { const target=x.url; if(typeof target!=='string'||target!==config.url) throw Error('Hub URL changed; review it again before approving'); await writeFile(bindingFile,JSON.stringify({url:target}),{mode:0o600}); approvedUrl=target; } else if (x.action==='release') await release();  else if (['HOME','BACK','ENTER'].includes(x.action)) { if(req.headers['x-surface-viewer-controls']!=='1') throw Error('Click the simulator to take control first'); await input({type:'key',key:x.action}); } else if (['start','stop'].includes(x.action)) { await hub(`device/${x.action}`,{role:'admin',method:'POST'}); } else if(x.action==='force-release') { await hub('lease',{role:'admin',method:'DELETE'}); lease=null; } else if(x.action==='tokens') return json(res,200,await (await hub('tokens',{role:'admin'})).json()); else if(x.action==='revoke-token') { if(!/^[\w-]+$/.test(x.id)) throw Error('Invalid token ID'); await hub(`tokens/${x.id}`,{role:'admin',method:'DELETE'}); } else throw Error('Unknown action'); return json(res,200,{ok:true}); }
  if (path==='/surface/frame' && req.method==='GET') { try { const f=await capture(); res.writeHead(200,{'content-type':'image/png','x-surface-seq':String(f.seq),'x-surface-width':String(f.width),'x-surface-height':String(f.height),'x-surface-title':'Android simulator'}); return res.end(f.bytes); } catch { res.writeHead(204); return res.end(); } }
  if (path==='/surface/control' && req.method==='POST') { const x=await body(req); controller=x.controller==='user'?x.viewer:null; if (!controller) await release(); res.writeHead(204); return res.end(); }

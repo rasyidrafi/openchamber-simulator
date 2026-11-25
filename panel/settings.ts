@@ -1,4 +1,4 @@
-export type State={url:string,urlApproved:boolean,hasClient:boolean,admin:boolean,devices:{name:string,status:string,control?:string}[],clientError:string|null};
+export type State={url:string,urlApproved:boolean,hasClient:boolean,admin:boolean,devices:{id?:string,name:string,status:string,control?:string}[],clientError:string|null};
 type Token={id:string,name:string};
 
 export function settingsPage(page:HTMLElement,heading:HTMLElement,get:()=>State|undefined,action:(name:string,data?:object)=>Promise<any>,refresh:()=>Promise<void>){
